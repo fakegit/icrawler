@@ -52,7 +52,7 @@ Using built-in crawlers is very simple. A minimal example is shown as follows.
     google_crawler = GoogleImageCrawler(storage={'root_dir': 'your_image_dir'})
     google_crawler.crawl(keyword='cat', max_num=100)
 
-You can also configurate number of threads and apply advanced search options.
+You can also configure number of threads and apply advanced search options.
 (Note: compatible with 0.6.0 and later versions)
 
 .. code:: python
@@ -85,7 +85,7 @@ they are connected with each other with FIFO queues. The workflow is shown in
 the following figure.
 
 .. figure:: http://7xopqn.com1.z0.glb.clouddn.com/workflow.png
-   :alt: 
+   :alt:
 
 -  ``url_queue`` stores the url of pages which may contain images
 -  ``task_queue`` stores the image url as well as any meta data you

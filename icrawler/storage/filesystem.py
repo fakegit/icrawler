@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
-
 import os
 import os.path as osp
 
 import six
 
-from icrawler.storage import BaseStorage
+from .base import BaseStorage
 
 
 class FileSystem(BaseStorage):
@@ -25,7 +23,7 @@ class FileSystem(BaseStorage):
                 os.makedirs(folder)
             except OSError:
                 pass
-        mode = 'w' if isinstance(data, six.string_types) else 'wb'
+        mode = "w" if isinstance(data, str) else "wb"
         with open(filepath, mode) as fout:
             fout.write(data)
 

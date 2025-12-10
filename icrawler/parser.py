@@ -1,13 +1,10 @@
-# -*- coding: utf-8 -*-
-
 import logging
+import queue
 import time
 from threading import current_thread
+from urllib.parse import urlsplit
 
-from six.moves import queue
-from six.moves.urllib.parse import urlsplit
-
-from icrawler.utils import ThreadPool
+from .utils import ThreadPool
 
 
 class Parser(ThreadPool):
@@ -25,9 +22,9 @@ class Parser(ThreadPool):
         lock: A threading.Lock object.
     """
 
-    def __init__(self, thread_num, signal, session):
+    def __init__(self, thread_num, signal, session, in_queue=None, out_queue=None, name="parser"):
         """Init Parser with some shared variables."""
-        super(Parser, self).__init__(thread_num, name='parser')
+        super().__init__(thread_num, in_queue=in_queue, out_queue=out_queue, name=name)
         self.signal = signal
         self.session = session
 
@@ -39,15 +36,11 @@ class Parser(ThreadPool):
         :Example:
 
         >>> task = {}
-        >>> self.output(task)
+        >>> self.output(task)  # doctest: +SKIP
         """
         raise NotImplementedError
 
-    def worker_exec(self,
-                    queue_timeout=2,
-                    req_timeout=5,
-                    max_retry=3,
-                    **kwargs):
+    def worker_exec(self, queue_timeout=2, req_timeout=5, max_retry=3, **kwargs):
         """Target method of workers.
 
         Firstly download the page and then call the :func:`parse` method.
@@ -63,46 +56,51 @@ class Parser(ThreadPool):
             **kwargs: Arguments to be passed to the :func:`parse` method.
         """
         while True:
-            if self.signal.get('reach_max_num'):
-                self.logger.info('downloaded image reached max num, thread %s '
-                                 'is ready to exit', current_thread().name)
+            if self.signal.get("reach_max_num"):
+                self.logger.info(
+                    "downloaded image reached max num, thread %s " "is ready to exit", current_thread().name
+                )
+                break
+            if self.signal.get("exceed_storage_space"):
+                self.logger.info("no more storage space, thread %s " "is ready to exit", current_thread().name)
                 break
             # get the page url
             try:
                 url = self.in_queue.get(timeout=queue_timeout)
             except queue.Empty:
-                if self.signal.get('feeder_exited'):
-                    self.logger.info(
-                        'no more page urls for thread %s to parse',
-                        current_thread().name)
+                if self.signal.get("feeder_exited"):
+                    self.logger.info("no more page urls for thread %s to parse", current_thread().name)
                     break
-                else:
-                    self.logger.info('%s is waiting for new page urls',
-                                     current_thread().name)
-                    continue
+                self.logger.info("%s is waiting for new page urls", current_thread().name)
+                continue
             except:
-                self.logger.error('exception in thread %s',
-                                  current_thread().name)
+                self.logger.error("exception in thread %s", current_thread().name)
                 continue
             else:
-                self.logger.debug('start fetching page {}'.format(url))
+                self.logger.debug(f"start fetching page {url}")
             # fetch and parse the page
             retry = max_retry
             while retry > 0:
                 try:
-                    base_url = '{0.scheme}://{0.netloc}'.format(urlsplit(url))
-                    response = self.session.get(url,
-                                                timeout=req_timeout,
-                                                headers={'Referer': base_url})
+                    base_url = "{0.scheme}://{0.netloc}".format(urlsplit(url))
+                    response = self.session.get(url, timeout=req_timeout, headers={"Referer": base_url})
                 except Exception as e:
                     self.logger.error(
-                        'Exception caught when fetching page %s, '
-                        'error: %s, remaining retry times: %d', url, e,
-                        retry - 1)
+                        "Exception caught when fetching page %s, " "error: %s, remaining retry times: %d",
+                        url,
+                        e,
+                        retry - 1,
+                    )
                 else:
-                    self.logger.info('parsing result page {}'.format(url))
-                    for task in self.parse(response, **kwargs):
-                        while not self.signal.get('reach_max_num'):
+                    self.logger.info(f"parsing result page {url}")
+                    task_list = self.parse(response, **kwargs)
+                    if not task_list:
+                        self.logger.debug("self.parse() returned no tasks")
+                        with open("task_list_error.log", "ab") as f:
+                            f.write(response.content)
+
+                    for task in task_list:
+                        while not self.signal.get("reach_max_num") and not self.signal.get("exceed_storage_space"):
                             try:
                                 if isinstance(task, dict):
                                     self.output(task, timeout=1)
@@ -115,17 +113,19 @@ class Parser(ThreadPool):
                                 time.sleep(1)
                             except Exception as e:
                                 self.logger.error(
-                                    'Exception caught when put task %s into '
-                                    'queue, error: %s', task, url)
+                                    "Exception caught when put task %s into " "queue, error: %s", task, url
+                                )
                             else:
                                 break
-                        if self.signal.get('reach_max_num'):
+                        if self.signal.get("reach_max_num"):
+                            break
+                        if self.signal.get("exceed_storage_space"):
                             break
                     self.in_queue.task_done()
                     break
                 finally:
                     retry -= 1
-        self.logger.info('thread {} exit'.format(current_thread().name))
+        self.logger.info(f"thread {current_thread().name} exit")
 
-    def __exit__(self):
-        logging.info('all parser threads exited')
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        logging.info("all parser threads exited")
